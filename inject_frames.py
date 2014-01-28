@@ -13,4 +13,5 @@ if __name__ == '__main__':
         im = Image.open(infile)
         ffmpeg.stdin.write(struct.pack('4sii', 'FRM\n', *im.size))
         ffmpeg.stdin.write(im.tostring('raw', 'RGB'))
-        time.sleep(0.5)
+        ffmpeg.stdin.flush()
+        time.sleep(5/60)

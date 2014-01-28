@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 
-#define kBufferSize 4098
+#define kBufferSize 8192
 
 typedef struct {
     char tag[4];
@@ -46,9 +46,9 @@ static FILE* spawn_ffmpeg(const char* ip, const char* port, const char* pix_fmt,
 
     char command[4096] = {'\0'};
     snprintf(command, 4096,
-        "ffmpeg -f rawvideo -pix_fmt %s -s %ix%i -r 2 -i - "
-        "-threads 0 -vcodec libx264 -g 1 -preset ultrafast -tune zerolatency "
-        "-crf 20 -f mpegts udp://%s:%s",
+        "ffmpeg -f rawvideo -pix_fmt %s -s %ix%i -r 5 -i - "
+        "-threads 2 -vcodec libx264 -g 5 -preset ultrafast -tune zerolatency "
+        "-crf 30 -f mpegts udp://%s:%s",
         pix_fmt, width, height, ip, port);
     printf("command: %s\n", command);
     return popen(command, "w");
@@ -69,7 +69,7 @@ int main(int argc, char const *argv[]) {
         FrameHeader header;
         memset(&header, 0, sizeof(header));
 
-        if (fread(&header, sizeof(header), 1, stdin) == 1) {
+        if (fread(&header, 1, sizeof(header), stdin) == 1) {
             if (strncmp(header.tag, "FRM\n", 4) != 0) {
                 fprintf(stderr, "Invalid header: %s\n", header.tag);
                 exit(1);
@@ -86,12 +86,12 @@ int main(int argc, char const *argv[]) {
             size_t remaining = (size_t)(header.width * header.height) * bits_per_pixel;
             while (remaining > 0) {
                 if (remaining > kBufferSize) {
-                    fread(buffer, kBufferSize, 1, stdin);
-                    fwrite(buffer, kBufferSize, 1, ffmpeg);
+                    fread(buffer, 1, kBufferSize, stdin);
+                    fwrite(buffer, 1, kBufferSize, ffmpeg);
                     remaining -= kBufferSize;
                 } else {
-                    fread(buffer, remaining, 1, stdin);
-                    fwrite(buffer, remaining, 1, ffmpeg);
+                    fread(buffer, 1, remaining, stdin);
+                    fwrite(buffer, 1, remaining, ffmpeg);
                     remaining = 0;
                 }
             }
