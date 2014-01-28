@@ -69,7 +69,7 @@ int main(int argc, char const *argv[]) {
         FrameHeader header;
         memset(&header, 0, sizeof(header));
 
-        if (fread(&header, 1, sizeof(header), stdin) == 1) {
+        if (fread(&header, sizeof(header), 1, stdin) == 1) {
             if (strncmp(header.tag, "FRM\n", 4) != 0) {
                 fprintf(stderr, "Invalid header: %s\n", header.tag);
                 exit(1);
