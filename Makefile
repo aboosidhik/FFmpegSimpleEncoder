@@ -8,9 +8,9 @@ all: clouddisplayencoder clouddisplayplayer
 clean:
 	rm -f clouddisplayplayer clouddisplayencoder
 
-clouddisplayencoder: clouddisplayencoder.c
+clouddisplayencoder: src/clouddisplayencoder.c
 	$(CC) -std=c99 -o $@ $< $(CFLAGS)
 
-clouddisplayplayer: clouddisplayplayer.c
+clouddisplayplayer: src/clouddisplayplayer.c
 	$(CC) -std=c99 -o $@ $< $(CFLAGS)
 
