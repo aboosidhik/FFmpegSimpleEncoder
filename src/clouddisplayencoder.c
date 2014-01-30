@@ -13,19 +13,14 @@ typedef struct {
 } FrameHeader;
 
 
-static size_t pix_fmt_to_bits_per_pixel(const char* pix_fmt) {
-    if (strcmp(pix_fmt, "RGB888") == 0) {
-        return 3;
-    } else if (strcmp(pix_fmt, "BGR888") == 0) {
-        return 3;
-    } else if (strcmp(pix_fmt, "ABGR8888") == 0) {
-        return 4;
-    } else if (strcmp(pix_fmt, "ARGB8888") == 0) {
-        return 4;
-    } else {
-        printf("Error! Invalid PIX_FMT: %s\n", pix_fmt);
-        exit(1);
+static size_t pix_fmt_to_bytes_per_pixel(const char* pix_fmt) {
+    // Count the number of '8' in pix_fmt.
+    size_t result = 0;
+    size_t len = strlen(pix_fmt);
+    for (size_t i = 0; i < len; ++i) {
+        if (pix_fmt[i] == '8') ++result;
     }
+    return result;
 }
 
 
@@ -62,7 +57,7 @@ int main(int argc, char const *argv[]) {
     }
 
     FILE* ffmpeg = NULL;
-    size_t bits_per_pixel = pix_fmt_to_bits_per_pixel(argv[3]);
+    size_t bytes_per_pixel = pix_fmt_to_bytes_per_pixel(argv[3]);
     uint8_t buffer[kBufferSize] = {0};
 
     while (1) {
@@ -83,7 +78,7 @@ int main(int argc, char const *argv[]) {
                 }
             }
 
-            size_t remaining = (size_t)(header.width * header.height) * bits_per_pixel;
+            size_t remaining = (size_t)(header.width * header.height) * bytes_per_pixel;
             while (remaining > 0) {
                 if (remaining > kBufferSize) {
                     fread(buffer, 1, kBufferSize, stdin);
