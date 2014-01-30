@@ -34,6 +34,10 @@ static FILE* spawn_ffmpeg(const char* ip, const char* port, const char* pix_fmt,
         pix_fmt = "abgr";
     } else if (strcmp(pix_fmt, "ARGB8888") == 0) {
         pix_fmt = "argb";
+    } else if (strcmp(pix_fmt, "BGRA8888") == 0) {
+        pix_fmt = "bgra";
+    } else if (strcmp(pix_fmt, "RGBA8888") == 0) {
+        pix_fmt = "rgba";
     } else {
         printf("Error! Invalid PIX_FMT: %s\n", pix_fmt);
         exit(1);
