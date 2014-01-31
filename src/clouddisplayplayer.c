@@ -42,6 +42,12 @@ typedef struct {
     int32_t height;
 } PositionCommand;
 
+typedef struct __attribute__((__packed__)) {
+  int32_t x;
+  int32_t y;
+  uint8_t flags;
+} MouseData;
+
 
 static int videoStream;
 static AVFormatContext *pFormatCtx = NULL;
@@ -50,6 +56,9 @@ static AVCodec *pCodec = NULL;
 
 SDL_mutex *positionMutex = NULL;
 static PositionCommand currentPosition;
+
+SDL_mutex *mouseMutex = NULL;
+static MouseData currentMouse;
 
 
 static void sigterm_handler(int sig) {
@@ -79,11 +88,14 @@ int command_thread(void *data) {
               }
               SDL_mutexV(positionMutex);
           } else if (strncmp(command, "PTR\n", 4) == 0) {
-              PositionCommand mouse;
+              MouseData mouse;
               if (fread(&mouse, sizeof(mouse), 1, stdin) != 1) {
-                  fprintf(stderr, "invalid params to PTR command\n");
-                  exit(1);
+                fprintf(stderr, "invalid params to PTR command\n");
+                exit(1);
               }
+              SDL_mutexP(mouseMutex);
+              currentMouse = mouse;
+              SDL_mutexV(mouseMutex);
           } else {
               fprintf(stderr, "invalid command: %s\n", command);
               exit(1);
@@ -106,6 +118,7 @@ static void displayVideoRectangle() {
 
   SDL_Overlay *overlay = NULL;
   SDL_Surface *screen = NULL;
+  SDL_Surface *cursor_image = NULL;
   SDL_Rect rect;
   SDL_Event event;
   PositionCommand position;
@@ -116,6 +129,11 @@ static void displayVideoRectangle() {
   position = currentPosition;
   SDL_mutexV(positionMutex);
 
+  cursor_image = SDL_LoadBMP("cursor.bmp");
+  if (!cursor_image) {
+    fprintf(stderr, "could not load cursor image: %s\n", SDL_GetError());
+  }
+
   memset(buffer, 0, sizeof(buffer));
   snprintf(buffer, sizeof(buffer), "%i,%i", position.x, position.y);
   setenv("SDL_VIDEO_WINDOW_POS", buffer, 1);
@@ -125,7 +143,7 @@ static void displayVideoRectangle() {
     SDL_HWSURFACE | SDL_ASYNCBLIT | SDL_HWACCEL | SDL_NOFRAME);
 
   if (!screen) {
-    fprintf(stderr, "SDL: could not set video mode - exiting\n");
+    fprintf(stderr, "could not set video mode: %s\n", SDL_GetError());
     exit(1);
   }
 
@@ -191,6 +209,26 @@ static void displayVideoRectangle() {
     // Free the packet that was allocated by av_read_frame
     av_free_packet(&packet);
 
+    // Only draw mouse if the image was loaded correctly.
+    if (cursor_image) {
+      MouseData mouse;
+      SDL_mutexP(mouseMutex);
+      mouse = currentMouse;
+      SDL_mutexV(mouseMutex);
+
+      if (mouse.flags & 0x01) {
+        SDL_Rect pos;
+        pos.x = mouse.x;
+        pos.y = mouse.y;
+        if (SDL_BlitSurface(cursor_image, NULL, screen, &pos) < 0) {
+          fprintf(stderr, "BlitSurface error: %s\n", SDL_GetError());
+        }
+        SDL_UpdateRect(screen, pos.x, pos.y, cursor_image->w, cursor_image->h);
+      }
+    } else {
+      fprintf(stderr, "cursor image not loaded, skipping mouse positioning\n");
+    }
+
     // Drain event pool.
     while (SDL_PollEvent(&event)) {
       switch (event.type) {
@@ -199,7 +237,6 @@ static void displayVideoRectangle() {
           exit(0);
           break;
         case CLOUDDISPLAY_RESIZE_EVENT:
-          printf("Push the event again!\n");
           // Push the event again so main-loop can call us again.
           SDL_PushEvent(&event);
           goto cleanup;
@@ -247,6 +284,10 @@ int main(int argc, char *argv[]) {
   // Global position initialization
   memset(&currentPosition, 0, sizeof(currentPosition));
   positionMutex = SDL_CreateMutex();
+
+  // Global mouse initialization
+  memset(&currentMouse, 0, sizeof(currentMouse));
+  mouseMutex = SDL_CreateMutex();
 
   // Start thread that will read commands from stdin.
   SDL_CreateThread(command_thread, NULL);
