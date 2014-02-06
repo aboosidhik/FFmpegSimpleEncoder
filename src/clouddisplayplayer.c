@@ -36,11 +36,11 @@
 #define CLOUDDISPLAY_RESIZE_EVENT  (SDL_USEREVENT + 2)
 
 typedef struct {
-    int32_t x;
-    int32_t y;
-    int32_t width;
-    int32_t height;
-} PositionCommand;
+  int32_t x;
+  int32_t y;
+  int32_t width;
+  int32_t height;
+} PositionData;
 
 typedef struct __attribute__((__packed__)) {
   int32_t x;
@@ -49,13 +49,13 @@ typedef struct __attribute__((__packed__)) {
 } MouseData;
 
 
-static int videoStream;
 static AVFormatContext *pFormatCtx = NULL;
 static AVCodecContext *pCodecCtx = NULL;
 static AVCodec *pCodec = NULL;
+static int videoStream = -1;
 
 SDL_mutex *positionMutex = NULL;
-static PositionCommand currentPosition;
+static PositionData currentPosition;
 
 SDL_mutex *mouseMutex = NULL;
 static MouseData currentMouse;
@@ -74,10 +74,10 @@ int command_thread(void *data) {
       char command[4] = {0};
       if (fread(&command, sizeof(command), 1, stdin) == 1) {
           if (strncmp(command, "POS\n", 4) == 0) {
-              PositionCommand position;
+              PositionData position;
               if (fread(&position, sizeof(position), 1, stdin) != 1) {
-                  fprintf(stderr, "invalid params to POS command\n");
-                  exit(1);
+                fprintf(stderr, "invalid params to POS command\n");
+                exit(1);
               }
               SDL_mutexP(positionMutex);
               if (memcmp(&currentPosition, &position, sizeof(position)) != 0) {
@@ -121,7 +121,7 @@ static void displayVideoRectangle() {
   SDL_Surface *cursor_image = NULL;
   SDL_Rect rect;
   SDL_Event event;
-  PositionCommand position;
+  PositionData position;
   char buffer[1024];
 
   // Grab the position.
