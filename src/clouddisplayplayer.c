@@ -22,6 +22,7 @@
 **/
 #include <sys/types.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -32,6 +33,7 @@
 
 #include <stdio.h>
 
+#define MAX_FDS_OPEN 512
 
 #define CLOUDDISPLAY_RESIZE_EVENT  (SDL_USEREVENT + 2)
 
@@ -265,6 +267,11 @@ int main(int argc, char *argv[]) {
   if (argc < 3) {
     fprintf(stderr, "Usage: clouddisplayplayer SRC_IP SRC_PORT\n");
     exit(1);
+  }
+
+  // Close all file descriptors except the standard ones
+  for (i = STDERR_FILENO + 1; i < MAX_FDS_OPEN; ++i) {
+    close(i);
   }
 
   // Register a few signals to avoid blocking forever.
