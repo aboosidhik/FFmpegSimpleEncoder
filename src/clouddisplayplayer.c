@@ -32,6 +32,7 @@
 
 #include <SDL.h>
 #include <SDL_thread.h>
+#include <SDL_syswm.h>
 
 #include <stdio.h>
 
@@ -145,6 +146,17 @@ static void displayVideoRectangle() {
   // Make a screen to put our video
   screen = SDL_SetVideoMode(position.width, position.height, 0,
     SDL_HWSURFACE | SDL_ASYNCBLIT | SDL_HWACCEL | SDL_NOFRAME);
+
+  SDL_SysWMinfo SysInfo;
+  SDL_VERSION(&SysInfo.version);
+  if (SDL_GetWMInfo(&SysInfo) <= 0) {
+    fprintf(stderr, "unable to get window info: %s\n", SDL_GetError());
+    exit(1);
+  }
+
+  SysInfo.info.x11.lock_func();
+  XRaiseWindow(SysInfo.info.x11.display, SysInfo.info.x11.wmwindow);
+  SysInfo.info.x11.unlock_func();
 
   if (!screen) {
     fprintf(stderr, "could not set video mode: %s\n", SDL_GetError());
