@@ -21,6 +21,8 @@
  *
 **/
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -272,6 +274,14 @@ int main(int argc, char *argv[]) {
   // Close all file descriptors except the standard ones
   for (i = STDERR_FILENO + 1; i < MAX_FDS_OPEN; ++i) {
     close(i);
+  }
+
+  // Redirect stdout and stderr to /dev/null.
+  {
+    int fd = open("/dev/null", O_RDWR);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    close(fd);
   }
 
   // Register a few signals to avoid blocking forever.
