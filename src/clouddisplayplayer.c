@@ -147,6 +147,7 @@ static void displayVideoRectangle() {
   screen = SDL_SetVideoMode(position.width, position.height, 0,
     SDL_HWSURFACE | SDL_ASYNCBLIT | SDL_HWACCEL | SDL_NOFRAME);
 
+#ifdef __linux__
   SDL_SysWMinfo SysInfo;
   SDL_VERSION(&SysInfo.version);
   if (SDL_GetWMInfo(&SysInfo) <= 0) {
@@ -157,6 +158,7 @@ static void displayVideoRectangle() {
   SysInfo.info.x11.lock_func();
   XRaiseWindow(SysInfo.info.x11.display, SysInfo.info.x11.wmwindow);
   SysInfo.info.x11.unlock_func();
+#endif
 
   if (!screen) {
     fprintf(stderr, "could not set video mode: %s\n", SDL_GetError());
