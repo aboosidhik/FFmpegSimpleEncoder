@@ -58,7 +58,7 @@ static enum AVPixelFormat pix_fmt_str_to_enum(const char* pix_fmt) {
 }
 
 
-static void read_frame(AVPicture* picture) {
+static void read_picture(AVPicture* picture) {
   char header[4];
   memset(&header, 0, sizeof(header));
 
@@ -79,8 +79,12 @@ static void read_frame(AVPicture* picture) {
   }
 }
 
-
-static void write_frame(AVCodecContext *encodingContext, AVFormatContext *outputContext, AVPicture* picture) {
+/**
+  If function returns 0 it is up to the caller to free the packet.
+**/
+static int encode_picture(AVCodecContext *encodingContext,
+                          AVPicture *picture,
+                          AVPacket *packet) {
   static struct AVFrame *frame = NULL;
   static struct SwsContext *sws_ctx = NULL;
 
@@ -121,36 +125,35 @@ static void write_frame(AVCodecContext *encodingContext, AVFormatContext *output
 
   frame->pts = av_gettime();
 
-  AVPacket packet;
+  // Encode the image
   int got_packet = 0;
-  // encode the image
-  if (avcodec_encode_video2(encodingContext, &packet, frame, &got_packet) < 0) {
-    fprintf(stderr, "error encoding video frame:\n");
-    exit(1);
+  if (avcodec_encode_video2(encodingContext, packet, frame, &got_packet) < 0) {
+    fprintf(stderr, "error encoding video frame\n");
+    return -1;
+  } else if (got_packet && packet->size) {
+    return 0;
   } else {
-    fprintf(stdout, "encoded frame!\n");
+    return 1;
   }
+}
 
+
+static void send_packet(AVFormatContext *outputContext, AVPacket* packet) {
   /* If size is zero, it means the image was buffered. */
-  if (got_packet && packet.size) {
-    packet.stream_index = 0;
+  packet->stream_index = 0;
 
-    // Write the compressed frame to the media output
-    int err = av_write_frame(outputContext, &packet);
-    if (err < 0) {
-      fprintf(stderr, "unable to write frame: %s\n", av_err2str(err));
-    } else {
-      fprintf(stdout, "wrote frame\n");
-    }
-
-    // Force flushing the output context
-    av_write_frame(outputContext, NULL);
-
-    // Free packet allocated by decoding.
-    av_free_packet(&packet);
-  } else {
-    fprintf(stdout, "buffering data\n");
+  // Write the compressed frame to the media output
+  int err = av_write_frame(outputContext, packet);
+  if (err < 0) {
+    fprintf(stderr, "unable to write frame: %s\n", av_err2str(err));
+    return;
   }
+
+  // Force flushing the output context
+  av_write_frame(outputContext, NULL);
+
+  // Free packet allocated by decoding.
+  av_free_packet(packet);
 }
 
 
@@ -252,9 +255,11 @@ int main(int argc, char const *argv[]) {
   }
 
   while (1) {
-    fprintf(stderr, "Reading frame\n");
-    read_frame(inputPicture);
-    fprintf(stderr, "Encoding frame\n");
-    write_frame(encodingContext, outputContext, inputPicture);
+    read_picture(inputPicture);
+
+    AVPacket packet;
+    if (encode_picture(encodingContext, inputPicture, &packet) == 0) {
+      send_packet(outputContext, &packet);
+    }
   }
 }
