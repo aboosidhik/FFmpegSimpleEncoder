@@ -258,6 +258,7 @@ int main(int argc, char const *argv[]) {
     read_picture(inputPicture);
 
     AVPacket packet;
+    memset(&packet, 0, sizeof(packet));
     if (encode_picture(encodingContext, inputPicture, &packet) == 0) {
       send_packet(outputContext, &packet);
     }
