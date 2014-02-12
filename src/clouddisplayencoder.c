@@ -217,15 +217,17 @@ int main(int argc, char const *argv[]) {
   encodingContext->width = inputWidth;
   encodingContext->height = inputHeight;
   // Set default encoding parameters
-  encodingContext->bit_rate = 400000;
   encodingContext->time_base.num = 1;
-  encodingContext->time_base.den = 10;
-  encodingContext->gop_size = 1; // emit only intra frames
+  encodingContext->time_base.den = 15;
+  encodingContext->gop_size = 0; // Emit only intra frames
+  encodingContext->has_b_frames = 0; // We don't want b frames
+  encodingContext->me_method = 1; // No motion estimation
   encodingContext->pix_fmt = AV_PIX_FMT_YUV420P;
 
   // Set the same presets as in the command line
   av_opt_set(encodingContext->priv_data, "preset", "ultrafast", 0);
   av_opt_set(encodingContext->priv_data, "tune", "zerolatency", 0);
+  av_opt_set_double(encodingContext->priv_data, "crf", 20.0, 0);
 
   // Open encoding context for our encoder
   if (avcodec_open2(encodingContext, encoder, NULL) < 0) {
