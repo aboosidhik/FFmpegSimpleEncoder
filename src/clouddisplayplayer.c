@@ -59,10 +59,10 @@ static AVCodecContext *pCodecCtx = NULL;
 static AVCodec *pCodec = NULL;
 static int videoStream = -1;
 
-SDL_mutex *positionMutex = NULL;
+static SDL_mutex *positionMutex = NULL;
 static PositionData currentPosition;
 
-SDL_mutex *mouseMutex = NULL;
+static SDL_mutex *mouseMutex = NULL;
 static MouseData currentMouse;
 
 
@@ -253,7 +253,6 @@ static void displayVideoRectangle() {
         case SDL_QUIT:
           SDL_Quit();
           exit(0);
-          break;
         case CLOUDDISPLAY_RESIZE_EVENT:
           // Push the event again so main-loop can call us again.
           SDL_PushEvent(&event);
@@ -276,7 +275,6 @@ cleanup:
 
 
 int main(int argc, char *argv[]) {
-  unsigned int i = 0;
   char input_str[256] = {0};
   AVDictionary *optionsDict = NULL;
 
@@ -286,7 +284,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Close all file descriptors except the standard ones
-  for (i = STDERR_FILENO + 1; i < MAX_FDS_OPEN; ++i) {
+  for (int i = STDERR_FILENO + 1; i < MAX_FDS_OPEN; ++i) {
     close(i);
   }
 
@@ -338,7 +336,7 @@ int main(int argc, char *argv[]) {
 
   // Find the first video stream
   videoStream = -1;
-  for (i = 0; i < pFormatCtx->nb_streams; i++) {
+  for (size_t i = 0; i < pFormatCtx->nb_streams; i++) {
     if (pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
       videoStream = i;
       break;
@@ -375,12 +373,6 @@ int main(int argc, char *argv[]) {
       }
     }
   }
-
-  // Close the codec
-  avcodec_close(pCodecCtx);
-
-  // Close the video stream
-  avformat_close_input(&pFormatCtx);
 
   return 0;
 }
