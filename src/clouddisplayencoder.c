@@ -15,16 +15,52 @@
 
 #define MAX_FDS_OPEN 512
 
+#pragma pack(push)
+#pragma pack(1)
+
+typedef struct {
+  uint64_t pts;
+  uint32_t nb_samples;
+} AudioData;
+
+#pragma pack(pop)
+
 // Only invariants are allowed to be static.
 static int32_t inputWidth = 0;
 static int32_t inputHeight = 0;
 static enum AVPixelFormat inputPixelFormat = AV_PIX_FMT_NONE;
 static size_t inputBytesPerPixel = 0;
+static enum AVSampleFormat inputSampleFormat = AV_SAMPLE_FMT_NONE;
+static size_t inputBytesPerSample = 0;
 
 
 static void sigterm_handler(int sig) {
   (void)sig; // Supress unused warning.
   exit(123);
+}
+
+
+static size_t aud_fmt_to_bytes_per_sample(const char* aud_fmt) {
+  if (strcmp(aud_fmt, "PCMS16LE") == 0) {
+    return 4; // Two bytes times two channels
+  } else if (strcmp(aud_fmt, "PCMF32LE") == 0) {
+    return 8; // Four bytes times two channels
+  } else {
+    printf("Error! Invalid AUD_FMT: %s\n", aud_fmt);
+    exit(1);
+  }
+}
+
+
+static enum AVSampleFormat aud_fmt_str_to_enum(const char* aud_fmt) {
+  if (strcmp(aud_fmt, "PCMS16LE") == 0) {
+    return AV_SAMPLE_FMT_S16;
+  } else if (strcmp(aud_fmt, "PCMF32LE") == 0) {
+    return AV_SAMPLE_FMT_FLT;
+  } else {
+    printf("Error! Invalid AUD_FMT: %s\n", aud_fmt);
+    exit(1);
+  }
 }
 
 
@@ -64,14 +100,32 @@ static void read_picture(AVPicture* picture) {
   memset(&header, 0, sizeof(header));
 
   if (fread(&header, sizeof(header), 1, stdin) == 1) {
-    if (strncmp(header, "FRM\n", 4) != 0) {
-      fprintf(stderr, "invalid header: %s\n", header);
-      exit(1);
-    }
+    if (strncmp(header, "FRM\n", 4) == 0) {
+      size_t pictureSize = inputWidth * inputHeight * inputBytesPerPixel;
+      if (fread(picture->data[0], 1, pictureSize, stdin) != pictureSize) {
+        perror("unable to read frame");
+        exit(1);
+      }
+    } else if (strncmp(header, "AUD\n", 4) == 0) {
+      if (inputSampleFormat == AV_SAMPLE_FMT_NONE) {
+        fprintf(stderr, "cannot inject audio without argument setup\n");
+        exit(1);
+      }
 
-    size_t pictureSize = inputWidth * inputHeight * inputBytesPerPixel;
-    if (fread(picture->data[0], 1, pictureSize, stdin) != pictureSize) {
-      perror("unable to read frame");
+      AudioData aud = { .pts=0L };
+      if (fread(&aud, 1, sizeof(aud), stdin) == sizeof(aud)) {
+        size_t audioSize = inputBytesPerSample * aud.nb_samples;
+        // Advance stream until we are good again
+        for (size_t i = 0; i < audioSize; ++i) {
+          uint8_t tmp;
+          fread(&tmp, 1, sizeof(tmp), stdin);
+        }
+      } else {
+        perror("unable to read audio info");
+        exit(1);
+      }
+    } else {
+      fprintf(stderr, "invalid header: %s\n", header);
       exit(1);
     }
   } else {
@@ -182,6 +236,11 @@ int main(int argc, char const *argv[]) {
   inputHeight = atoi(argv[4]);
   inputPixelFormat = pix_fmt_str_to_enum(argv[5]);
   inputBytesPerPixel = pix_fmt_to_bytes_per_pixel(argv[5]);
+
+  if (argc == 8) {
+    inputSampleFormat = aud_fmt_str_to_enum(argv[6]);
+    inputBytesPerSample = aud_fmt_to_bytes_per_sample(argv[6]);
+  }
 
   // Register all formats and codecs
   av_register_all();
