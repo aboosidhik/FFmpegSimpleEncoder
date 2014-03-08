@@ -101,6 +101,8 @@ static void read_picture(AVPicture* picture) {
 
   if (fread(&header, sizeof(header), 1, stdin) == 1) {
     if (strncmp(header, "FRM\n", 4) == 0) {
+      uint64_t tmp;
+      fread(&tmp, sizeof(tmp), 1, stdin); // Skip PTS
       size_t pictureSize = inputWidth * inputHeight * inputBytesPerPixel;
       if (fread(picture->data[0], 1, pictureSize, stdin) != pictureSize) {
         perror("unable to read frame");
