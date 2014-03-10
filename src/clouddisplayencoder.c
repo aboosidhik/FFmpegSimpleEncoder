@@ -34,6 +34,7 @@ static enum AVSampleFormat inputSampleFormat = AV_SAMPLE_FMT_NONE;
 static size_t inputBytesPerSample = 0;
 
 
+static void sigterm_handler(int sig) __attribute__ ((noreturn));
 static void sigterm_handler(int sig) {
   (void)sig; // Supress unused warning.
   exit(123);
@@ -103,7 +104,7 @@ static void read_picture(AVPicture* picture) {
     if (strncmp(header, "FRM\n", 4) == 0) {
       uint64_t tmp;
       fread(&tmp, sizeof(tmp), 1, stdin); // Skip PTS
-      size_t pictureSize = inputWidth * inputHeight * inputBytesPerPixel;
+      size_t pictureSize = (size_t)(inputWidth * inputHeight) * inputBytesPerPixel;
       if (fread(picture->data[0], 1, pictureSize, stdin) != pictureSize) {
         perror("unable to read frame");
         exit(1);
@@ -257,42 +258,42 @@ int main(int argc, char const *argv[]) {
   }
 
   // Find the H.264 encoder. The `encoder` struct must be "opened" before using.
-  AVCodec *encoder = avcodec_find_encoder_by_name("libx264");
-  if (!encoder) {
+  AVCodec *videoEncoder = avcodec_find_encoder_by_name("libx264");
+  if (!videoEncoder) {
     fprintf(stderr, "x264 encoder not found\n");
     return 1;
   }
 
-  // Add an stream to the output. This stream will contain video frames.
-  AVStream *stream = avformat_new_stream(outputContext, encoder);
-  if (!stream) {
-    fprintf(stderr, "error when creating stream\n");
+  // Add the video stream to the output. This stream will contain video frames.
+  AVStream *videoStream = avformat_new_stream(outputContext, videoEncoder);
+  if (!videoStream) {
+    fprintf(stderr, "error when creating videoStream\n");
     return 1;
   }
   // Configure the stream ID (needed for transmitting it)
-  stream->id = outputContext->nb_streams - 1;
+  videoStream->id = (int)(outputContext->nb_streams - 1);
 
   // Grab the encoding context from format.
-  AVCodecContext *encodingContext = stream->codec;
+  AVCodecContext *videoEncodingContext = videoStream->codec;
 
   // Resolution must be a multiple of two
-  encodingContext->width = inputWidth;
-  encodingContext->height = inputHeight;
+  videoEncodingContext->width = inputWidth;
+  videoEncodingContext->height = inputHeight;
   // Set default encoding parameters
-  encodingContext->time_base.num = 1;
-  encodingContext->time_base.den = 15;
-  encodingContext->gop_size = 0; // Emit only intra frames
-  encodingContext->has_b_frames = 0; // We don't want b frames
-  encodingContext->me_method = 1; // No motion estimation
-  encodingContext->pix_fmt = AV_PIX_FMT_YUV420P;
+  videoEncodingContext->time_base.num = 1;
+  videoEncodingContext->time_base.den = 15;
+  videoEncodingContext->gop_size = 0; // Emit only intra frames
+  videoEncodingContext->has_b_frames = 0; // We don't want b frames
+  videoEncodingContext->me_method = 1; // No motion estimation
+  videoEncodingContext->pix_fmt = AV_PIX_FMT_YUV420P;
 
   // Set the same presets as in the command line
-  av_opt_set(encodingContext->priv_data, "preset", "ultrafast", 0);
-  av_opt_set(encodingContext->priv_data, "tune", "zerolatency", 0);
-  av_opt_set_double(encodingContext->priv_data, "crf", 20.0, 0);
+  av_opt_set(videoEncodingContext->priv_data, "preset", "ultrafast", 0);
+  av_opt_set(videoEncodingContext->priv_data, "tune", "zerolatency", 0);
+  av_opt_set_double(videoEncodingContext->priv_data, "crf", 20.0, 0);
 
   // Open encoding context for our encoder
-  if (avcodec_open2(encodingContext, encoder, NULL) < 0) {
+  if (avcodec_open2(videoEncodingContext, videoEncoder, NULL) < 0) {
     fprintf(stderr, "error opening encoder\n");
     return 1;
   }
@@ -323,7 +324,7 @@ int main(int argc, char const *argv[]) {
 
     AVPacket packet;
     memset(&packet, 0, sizeof(packet));
-    if (encode_picture(encodingContext, inputPicture, &packet) == 0) {
+    if (encode_picture(videoEncodingContext, inputPicture, &packet) == 0) {
       send_packet(outputContext, &packet);
     }
   }
