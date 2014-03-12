@@ -4,34 +4,47 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <assert.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libavutil/time.h>
+#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 
 
 #define MAX_FDS_OPEN 512
+#define VIDEO_STREAM_ID 0
+#define AUDIO_STREAM_ID 1
 
 #pragma pack(push)
 #pragma pack(1)
 
 typedef struct {
+  char command[4];
   uint64_t pts;
-  uint32_t nb_samples;
-} AudioData;
+} CommandData;
 
 #pragma pack(pop)
+
 
 // Only invariants are allowed to be static.
 static int32_t inputWidth = 0;
 static int32_t inputHeight = 0;
 static enum AVPixelFormat inputPixelFormat = AV_PIX_FMT_NONE;
 static size_t inputBytesPerPixel = 0;
+
 static enum AVSampleFormat inputSampleFormat = AV_SAMPLE_FMT_NONE;
-static size_t inputBytesPerSample = 0;
+static size_t audioBytesPerSample = 0;
+static int inputSampleRate = 0;
+
+
+// Doing this in 2014 seems backwards
+inline size_t umin(size_t a, size_t b) {
+  return a < b ? a : b;
+}
 
 
 static void sigterm_handler(int sig) __attribute__ ((noreturn));
@@ -95,47 +108,78 @@ static enum AVPixelFormat pix_fmt_str_to_enum(const char* pix_fmt) {
   }
 }
 
+/**
+ * `buffer` must contain exactly `aCodecCtx->frame_size` samples.
+**/
+static int encode_audio(AVCodecContext *aCodecCtx,
+                        uint8_t *buffer,
+                        AVPacket *packet) {
+  static AVFrame *frame = NULL;
+  static SwrContext *swrCtx = NULL;
 
-static void read_picture(AVPicture* picture) {
-  char header[4];
-  memset(&header, 0, sizeof(header));
-
-  if (fread(&header, sizeof(header), 1, stdin) == 1) {
-    if (strncmp(header, "FRM\n", 4) == 0) {
-      uint64_t tmp;
-      fread(&tmp, sizeof(tmp), 1, stdin); // Skip PTS
-      size_t pictureSize = (size_t)(inputWidth * inputHeight) * inputBytesPerPixel;
-      if (fread(picture->data[0], 1, pictureSize, stdin) != pictureSize) {
-        perror("unable to read frame");
-        exit(1);
-      }
-    } else if (strncmp(header, "AUD\n", 4) == 0) {
-      if (inputSampleFormat == AV_SAMPLE_FMT_NONE) {
-        fprintf(stderr, "cannot inject audio without argument setup\n");
-        exit(1);
-      }
-
-      AudioData aud = { .pts=0L };
-      if (fread(&aud, 1, sizeof(aud), stdin) == sizeof(aud)) {
-        size_t audioSize = inputBytesPerSample * aud.nb_samples;
-        // Advance stream until we are good again
-        for (size_t i = 0; i < audioSize; ++i) {
-          uint8_t tmp;
-          fread(&tmp, 1, sizeof(tmp), stdin);
-        }
-      } else {
-        perror("unable to read audio info");
-        exit(1);
-      }
-    } else {
-      fprintf(stderr, "invalid header: %s\n", header);
+  if (!frame) {
+    // AAC requires exactly 1024 samples from each channel.
+    frame = avcodec_alloc_frame();
+    if (!frame) {
+      fprintf(stderr, "Could not allocate audio frame\n");
       exit(1);
     }
-  } else {
-    perror("unable to read header");
+
+    frame->nb_samples = aCodecCtx->frame_size;
+    frame->format = aCodecCtx->sample_fmt;
+    frame->channel_layout = aCodecCtx->channel_layout;
+
+    int buffer_size = av_samples_get_buffer_size(NULL,
+        aCodecCtx->channels, aCodecCtx->frame_size,
+        aCodecCtx->sample_fmt, 0);
+
+    if (avcodec_fill_audio_frame(frame,
+        aCodecCtx->channels, aCodecCtx->sample_fmt,
+        av_malloc((size_t)buffer_size), buffer_size, 0) < 0) {
+      fprintf(stderr, "Could not setup audio frame\n");
+      exit(1);
+    }
+  }
+
+  if (!swrCtx) {
+    // We need to resample from whatever the user is sending us to
+    swrCtx = swr_alloc();
+
+    av_opt_set_int(swrCtx, "in_channel_layout", (int64_t)aCodecCtx->channel_layout, 0);
+    av_opt_set_int(swrCtx, "in_sample_fmt", inputSampleFormat, 0);
+    av_opt_set_int(swrCtx, "in_sample_rate", aCodecCtx->sample_rate, 0);
+
+    av_opt_set_int(swrCtx, "out_channel_layout", (int64_t)aCodecCtx->channel_layout, 0);
+    av_opt_set_int(swrCtx, "out_sample_fmt", aCodecCtx->sample_fmt, 0);
+    av_opt_set_int(swrCtx, "out_sample_rate", aCodecCtx->sample_rate, 0);
+
+    if (swr_init(swrCtx) < 0) {
+      fprintf(stderr, "Unsupported resampler!\n");
+      exit(1);
+    }
+  }
+
+  if (swr_convert(swrCtx, frame->extended_data, aCodecCtx->frame_size,
+      (const uint8_t**)&buffer, aCodecCtx->frame_size) < 0) {
+    fprintf(stderr, "unable to rescale image\n");
     exit(1);
   }
+
+  frame->pts = av_gettime();
+
+  // Encode the image
+  int got_packet = 0;
+  if (avcodec_encode_audio2(aCodecCtx, packet, frame, &got_packet) < 0) {
+    fprintf(stderr, "error encoding video frame\n");
+    return -1;
+  } else if (got_packet && packet->size) {
+    packet->stream_index = AUDIO_STREAM_ID;
+    return 0;
+  } else {
+    return 1;
+  }
 }
+
 
 /**
   If function returns 0 it is up to the caller to free the packet.
@@ -189,6 +233,7 @@ static int encode_picture(AVCodecContext *encodingContext,
     fprintf(stderr, "error encoding video frame\n");
     return -1;
   } else if (got_packet && packet->size) {
+    packet->stream_index = VIDEO_STREAM_ID;
     return 0;
   } else {
     return 1;
@@ -197,9 +242,6 @@ static int encode_picture(AVCodecContext *encodingContext,
 
 
 static void send_packet(AVFormatContext *outputContext, AVPacket* packet) {
-  /* If size is zero, it means the image was buffered. */
-  packet->stream_index = 0;
-
   // Write the compressed frame to the media output
   int err = av_write_frame(outputContext, packet);
   if (err < 0) {
@@ -242,7 +284,8 @@ int main(int argc, char const *argv[]) {
 
   if (argc == 8) {
     inputSampleFormat = aud_fmt_str_to_enum(argv[6]);
-    inputBytesPerSample = aud_fmt_to_bytes_per_sample(argv[6]);
+    audioBytesPerSample = aud_fmt_to_bytes_per_sample(argv[6]);
+    inputSampleRate = atoi(argv[7]);
   }
 
   // Register all formats and codecs
@@ -271,7 +314,7 @@ int main(int argc, char const *argv[]) {
     return 1;
   }
   // Configure the stream ID (needed for transmitting it)
-  videoStream->id = (int)(outputContext->nb_streams - 1);
+  videoStream->id = VIDEO_STREAM_ID;
 
   // Grab the encoding context from format.
   AVCodecContext *videoEncodingContext = videoStream->codec;
@@ -298,6 +341,46 @@ int main(int argc, char const *argv[]) {
     return 1;
   }
 
+  AVCodecContext *aCodecCtx = NULL;
+  uint8_t *audioBuffer = NULL;
+  size_t audioSamples = 0;
+  size_t audioSamplesMax = 0;
+  if (inputSampleFormat != AV_SAMPLE_FMT_NONE) {
+    // Find the AAC encoder. The `encoder` struct must be "opened" before using.
+    AVCodec *audioEncoder = avcodec_find_encoder_by_name("libfaac");
+    if (!audioEncoder) {
+      fprintf(stderr, "AAC encoder not found\n");
+      return 1;
+    }
+
+    // Add the audio stream to the output. This stream will contain audio frames.
+    AVStream *audioStream = avformat_new_stream(outputContext, audioEncoder);
+    if (!audioStream) {
+      fprintf(stderr, "error when creating videoStream\n");
+      return 1;
+    }
+    // Configure the stream ID (needed for transmitting it)
+    audioStream->id = AUDIO_STREAM_ID;
+
+    // Grab the encoding context from format.
+    aCodecCtx = audioStream->codec;
+
+    aCodecCtx->sample_fmt = audioEncoder->sample_fmts[0];
+    aCodecCtx->bit_rate = 128000;
+    aCodecCtx->sample_rate = inputSampleRate;
+    aCodecCtx->channels = av_get_channel_layout_nb_channels(AV_CH_LAYOUT_STEREO);
+    aCodecCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+
+    // Open encoding context for our encoder
+    if (avcodec_open2(aCodecCtx, audioEncoder, NULL) < 0) {
+      fprintf(stderr, "error opening encoder\n");
+      return 1;
+    }
+
+    audioSamplesMax = (size_t)aCodecCtx->frame_size;
+    audioBuffer = malloc(audioBytesPerSample * audioSamplesMax);
+  }
+
   // Open output buffer. This will also open the UDP socket.
   if (avio_open(&outputContext->pb, outputAddr, AVIO_FLAG_WRITE) < 0) {
     fprintf(stderr, "error opening output buffer\n");
@@ -319,13 +402,57 @@ int main(int argc, char const *argv[]) {
     return 1;
   }
 
+  // Our main loop. Moved here for clarity.
   while (1) {
-    read_picture(inputPicture);
+    CommandData header;
+    memset(&header, 0, sizeof(header));
 
-    AVPacket packet;
-    memset(&packet, 0, sizeof(packet));
-    if (encode_picture(videoEncodingContext, inputPicture, &packet) == 0) {
-      send_packet(outputContext, &packet);
+    if (fread(&header, sizeof(header), 1, stdin) == 1) {
+      if (strncmp(header.command, "FRM\n", 4) == 0) {
+        size_t pictureSize = (size_t)(inputWidth * inputHeight) * inputBytesPerPixel;
+        if (fread(inputPicture->data[0], 1, pictureSize, stdin) == pictureSize) {
+          AVPacket packet;
+          memset(&packet, 0, sizeof(packet));
+          if (encode_picture(videoEncodingContext, inputPicture, &packet) == 0) {
+            send_packet(outputContext, &packet);
+          }
+        } else {
+          perror("unable to read frame");
+          exit(1);
+        }
+      } else if (strncmp(header.command, "AUD\n", 4) == 0) {
+        uint32_t inputSamples = 0;
+        if (fread(&inputSamples, sizeof(inputSamples), 1, stdin) == 1) {
+          while (inputSamples > 0) {
+            size_t samples = umin(inputSamples, audioSamplesMax - audioSamples);
+            if (fread((uint8_t *)audioBuffer + (audioSamples * audioBytesPerSample),
+                audioBytesPerSample, samples, stdin) == samples) {
+              inputSamples -= samples;
+              audioSamples += samples;
+              if (audioSamples == audioSamplesMax) {
+                AVPacket packet;
+                memset(&packet, 0, sizeof(packet));
+                if (encode_audio(aCodecCtx, audioBuffer, &packet) == 0) {
+                  send_packet(outputContext, &packet);
+                }
+                audioSamples = 0;
+              }
+            } else {
+              perror("unable to read audio data info");
+              exit(1);
+            }
+          }
+        } else {
+          perror("unable to read audio sample info");
+          exit(1);
+        }
+      } else {
+        fprintf(stderr, "invalid header: %s\n", header.command);
+        exit(1);
+      }
+    } else {
+      perror("unable to read header");
+      exit(1);
     }
   }
 }
