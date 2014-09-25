@@ -49,7 +49,7 @@ static int inputSampleRate = 0;
 
 
 // Doing this in 2014 seems backwards
-inline size_t umin(size_t a, size_t b) {
+static inline size_t umin(size_t a, size_t b) {
   return a < b ? a : b;
 }
 
