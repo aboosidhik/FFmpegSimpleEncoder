@@ -1,3 +1,10 @@
+#ifdef _WIN32
+// Force stdin/out/err to binary mode
+// Not doing this on Windows results in false EOFs
+#include <fcntl.h>
+int _CRT_fmode = _O_BINARY;
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
